@@ -138,6 +138,58 @@ class PostgresSourceOperationsTest {
     assertEquals("-1000000.001", PostgresSourceOperations.parseMoneyValue("-£1,000,000.001"));
   }
 
+  @Test
+  public void jsonColumnAsCursor() throws SQLException {
+    final String tableName = "json_table";
+    final String createTableQuery = String.format("CREATE TABLE %s(id INTEGER PRIMARY KEY, json_col JSON, jsonb_col JSONB);",
+        tableName);
+    executeQuery(createTableQuery);
+    final List<JsonNode> expectedRecords = new ArrayList<>();
+    for (int i = 1; i <= 2; i++) {
+      final ObjectNode jsonNode = (ObjectNode) Jsons.jsonNode(Collections.emptyMap());
+      jsonNode.put("id", i);
+      
+      // Test JSON column - should be parsed as actual JSON object, not string
+      final ObjectNode jsonObject = Jsons.objectNode();
+      jsonObject.put("name", "test_" + i);
+      jsonObject.put("value", i * 10);
+      jsonNode.set("json_col", jsonObject);
+      
+      // Test JSONB column - should be parsed as actual JSON array, not string
+      final com.fasterxml.jackson.databind.node.ArrayNode jsonbArray = Jsons.arrayNode();
+      jsonbArray.add(i);
+      jsonbArray.add(i * 2);
+      jsonbArray.add(i * 3);
+      jsonNode.set("jsonb_col", jsonbArray);
+      
+      final String insertQuery = String.format("INSERT INTO %s VALUES (%s, '%s', '%s');",
+          tableName,
+          i,
+          "{\"name\": \"test_" + i + "\", \"value\": " + (i * 10) + "}",
+          "[" + i + ", " + (i * 2) + ", " + (i * 3) + "]");
+      executeQuery(insertQuery);
+      expectedRecords.add(jsonNode);
+    }
+
+    final List<JsonNode> actualRecords = new ArrayList<>();
+    try (final Connection connection = testdb.getContainer().createConnection("")) {
+      final PreparedStatement preparedStatement = connection.prepareStatement(
+          "SELECT * FROM " + tableName + " ORDER BY id");
+
+      try (final ResultSet resultSet = preparedStatement.executeQuery()) {
+        final int columnCount = resultSet.getMetaData().getColumnCount();
+        while (resultSet.next()) {
+          final ObjectNode jsonNode = (ObjectNode) Jsons.jsonNode(Collections.emptyMap());
+          for (int i = 1; i <= columnCount; i++) {
+            postgresSourceOperations.copyToJsonField(resultSet, i, jsonNode);
+          }
+          actualRecords.add(jsonNode);
+        }
+      }
+    }
+    assertThat(actualRecords, containsInAnyOrder(expectedRecords.toArray()));
+  }
+
   protected void executeQuery(final String query) throws SQLException {
     try (final Connection connection = testdb.getContainer().createConnection("")) {
       connection.createStatement().execute(query);

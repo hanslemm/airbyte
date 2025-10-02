@@ -159,6 +159,7 @@ public class PostgresSourceOperations extends AbstractJdbcCompatibleSourceOperat
         case TIMETZ -> putTimeWithTimezone(json, columnName, resultSet, colIndex);
         case TIMESTAMPTZ -> putTimestampWithTimezone(json, columnName, resultSet, colIndex);
         case "hstore" -> putHstoreAsJson(json, columnName, resultSet, colIndex);
+        case "json", "jsonb" -> putJsonAsObject(json, columnName, resultSet, colIndex);
         case "circle" -> putObject(json, columnName, resultSet, colIndex, PGcircle.class);
         case "box" -> putObject(json, columnName, resultSet, colIndex, PGbox.class);
         case "double precision", "float", "float8" -> putDouble(json, columnName, resultSet, colIndex);
@@ -513,7 +514,17 @@ public class PostgresSourceOperations extends AbstractJdbcCompatibleSourceOperat
     }
   }
 
-  @Override
+  public JsonSchemaType getAirbyteType(final int columnTypeInt, final String columnTypeName) {
+    // Handle JSON/JSONB types by column type name
+    if ("json".equalsIgnoreCase(columnTypeName) || "jsonb".equalsIgnoreCase(columnTypeName)) {
+      return JsonSchemaType.OBJECT;
+    }
+    
+    // Fall back to JDBC type-based logic
+    final PostgresType postgresType = PostgresType.safeGetJdbcType(columnTypeInt, POSTGRES_TYPE_DICT);
+    return getAirbyteType(postgresType);
+  }
+
   public JsonSchemaType getAirbyteType(final PostgresType jdbcType) {
     return switch (jdbcType) {
       case BOOLEAN -> JsonSchemaType.BOOLEAN;
@@ -655,6 +666,22 @@ public class PostgresSourceOperations extends AbstractJdbcCompatibleSourceOperat
       node.put(columnName, OBJECT_MAPPER.writeValueAsString(data));
     } catch (final JsonProcessingException e) {
       throw new RuntimeException("Could not parse 'hstore' value:" + e);
+    }
+  }
+
+  private void putJsonAsObject(final ObjectNode node, final String columnName, final ResultSet resultSet, final int index)
+      throws SQLException {
+    final String jsonString = resultSet.getString(index);
+    if (jsonString == null) {
+      node.putNull(columnName);
+      return;
+    }
+    try {
+      final JsonNode jsonValue = OBJECT_MAPPER.readTree(jsonString);
+      node.set(columnName, jsonValue);
+    } catch (final JsonProcessingException e) {
+      // If parsing fails, fall back to storing as string
+      node.put(columnName, jsonString);
     }
   }
 
