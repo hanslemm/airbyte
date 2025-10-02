@@ -44,12 +44,12 @@ docker run --rm \
         for jar in /workspace/libs/*.jar; do
             CLASSPATH="$CLASSPATH:$jar"
         done
-        
+
         # Compile the modified class
         javac -cp "$CLASSPATH" \
             -d /workspace/jar-contents \
             /workspace/PostgresSourceOperations.java
-        
+
         echo "✅ Compilation successful"
     '
 
