@@ -30,9 +30,12 @@ rmdir ../lib
 docker rm "$CONTAINER_ID"
 
 echo "🔄 Step 4: Replace source and compile..."
-# Replace the source file in the extracted structure
+# Replace the source files in the extracted structure
 cp "/Users/hanslemm/GitHub/airbyte-source/airbyte-integrations/connectors/source-postgres/src/main/java/io/airbyte/integrations/source/postgres/PostgresSourceOperations.java" \
    ../PostgresSourceOperations.java
+
+cp "/Users/hanslemm/GitHub/airbyte-source/airbyte-integrations/connectors/source-postgres/src/main/java/io/airbyte/integrations/source/postgres/PostgresType.java" \
+   ../PostgresType.java
 
 # Use Docker to compile with the exact same environment
 docker run --rm \
@@ -46,9 +49,10 @@ docker run --rm \
             CLASSPATH="$CLASSPATH:$jar"
         done
 
-        # Compile the modified class
+        # Compile the modified classes
         javac -cp "$CLASSPATH" \
             -d /workspace/jar-contents \
+            /workspace/PostgresType.java \
             /workspace/PostgresSourceOperations.java
 
         echo "✅ Compilation successful"
@@ -74,21 +78,27 @@ echo "🔧 Step 7: Setup buildx for multi-platform..."
 # Create a new buildx instance if it doesn't exist
 docker buildx create --name multiarch-builder --use 2>/dev/null || docker buildx use multiarch-builder
 
+# Generate datetime tag
+DATETIME_TAG=$(date +"%Y%m%d-%H%M%S")
+VERSION_TAG="3.7.0-${DATETIME_TAG}"
+
 echo "🏗️ Step 8: Build and push multi-platform image..."
+echo "📅 Using version tag: ${VERSION_TAG}"
+
 # Build for both AMD64 and ARM64
 docker buildx build \
     --platform linux/amd64,linux/arm64 \
-    -t ghcr.io/hanslemm/airbyte/source-postgres:3.7.0-dev \
+    -t ghcr.io/hanslemm/airbyte/source-postgres:${VERSION_TAG} \
     -t ghcr.io/hanslemm/airbyte/source-postgres:latest \
     --push \
     .
 
 echo "✅ Multi-architecture image built and pushed successfully!"
 echo "🎯 Images:"
-echo "   - ghcr.io/hanslemm/airbyte/source-postgres:3.7.0-dev"
+echo "   - ghcr.io/hanslemm/airbyte/source-postgres:${VERSION_TAG}"
 echo "   - ghcr.io/hanslemm/airbyte/source-postgres:latest"
 echo ""
 echo "🧪 Test on any platform with:"
-echo "   docker run --rm ghcr.io/hanslemm/airbyte/source-postgres:3.7.0-dev spec"
+echo "   docker run --rm ghcr.io/hanslemm/airbyte/source-postgres:${VERSION_TAG} spec"
 echo ""
 echo "📱 Supports: linux/amd64, linux/arm64"

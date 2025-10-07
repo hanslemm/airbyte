@@ -75,6 +75,9 @@ public class PostgresSourceOperations extends AbstractJdbcCompatibleSourceOperat
 
   static {
     Arrays.stream(PostgresType.class.getEnumConstants()).forEach(c -> POSTGRES_TYPE_DICT.put(c.type, c));
+    // Add specific PostgreSQL OID mappings for JSON and JSONB types
+    POSTGRES_TYPE_DICT.put(114, PostgresType.JSON);    // JSON type OID
+    POSTGRES_TYPE_DICT.put(3802, PostgresType.JSONB);  // JSONB type OID
   }
 
   @Override
@@ -519,7 +522,7 @@ public class PostgresSourceOperations extends AbstractJdbcCompatibleSourceOperat
     if ("json".equalsIgnoreCase(columnTypeName) || "jsonb".equalsIgnoreCase(columnTypeName)) {
       return JsonSchemaType.OBJECT;
     }
-    
+
     // Fall back to JDBC type-based logic
     final PostgresType postgresType = PostgresType.safeGetJdbcType(columnTypeInt, POSTGRES_TYPE_DICT);
     return getAirbyteType(postgresType);
@@ -614,6 +617,7 @@ public class PostgresSourceOperations extends AbstractJdbcCompatibleSourceOperat
       case TIME_WITH_TIMEZONE -> JsonSchemaType.STRING_TIME_WITH_TIMEZONE;
       case TIMESTAMP -> JsonSchemaType.STRING_TIMESTAMP_WITHOUT_TIMEZONE;
       case TIMESTAMP_WITH_TIMEZONE -> JsonSchemaType.STRING_TIMESTAMP_WITH_TIMEZONE;
+      case JSON, JSONB -> JsonSchemaType.OBJECT;
       default -> JsonSchemaType.STRING;
     };
   }
