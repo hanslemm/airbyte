@@ -9,16 +9,22 @@ import io.airbyte.cdk.load.command.DestinationStream
 import io.airbyte.cdk.load.data.AirbyteValue
 import io.airbyte.cdk.load.data.NullValue
 import io.airbyte.cdk.load.data.ObjectValue
+import io.airbyte.cdk.load.data.json.toAirbyteValue
 import io.airbyte.cdk.load.message.Meta
+import io.airbyte.cdk.load.table.CDC_DELETED_AT_COLUMN
 import io.airbyte.cdk.load.test.util.DestinationDataDumper
 import io.airbyte.cdk.load.test.util.OutputRecord
-import io.airbyte.commons.json.Jsons.deserializeExact
+import io.airbyte.cdk.load.util.deserializeToNode
 import io.airbyte.integrations.destination.snowflake.SnowflakeBeanFactory
 import io.airbyte.integrations.destination.snowflake.db.SnowflakeFinalTableNameGenerator
+import io.airbyte.integrations.destination.snowflake.db.toSnowflakeCompatibleName
 import io.airbyte.integrations.destination.snowflake.spec.SnowflakeConfiguration
 import io.airbyte.integrations.destination.snowflake.sql.SnowflakeSqlNameUtils
+import io.airbyte.integrations.destination.snowflake.sql.sqlEscape
 import java.math.BigDecimal
 import net.snowflake.client.jdbc.SnowflakeTimestampWithTimezone
+
+private val AIRBYTE_META_COLUMNS = Meta.COLUMN_NAMES + setOf(CDC_DELETED_AT_COLUMN)
 
 class SnowflakeDataDumper(
     private val configProvider: (ConfigurationSpecification) -> SnowflakeConfiguration
@@ -47,8 +53,8 @@ class SnowflakeDataDumper(
                     """
                     SELECT COUNT(*) AS TABLE_COUNT
                     FROM information_schema.tables
-                    WHERE table_schema = '${tableName.namespace}'
-                    AND table_name = '${tableName.name}'
+                    WHERE table_schema = '${sqlEscape(tableName.namespace.replace("\"\"", "\""))}'
+                    AND table_name = '${sqlEscape(tableName.name.replace("\"\"", "\""))}'
                 """.trimIndent()
 
                 val existsResultSet = statement.executeQuery(tableExistsQuery)
@@ -71,9 +77,9 @@ class SnowflakeDataDumper(
                     for (i in 1..resultSet.metaData.columnCount) {
                         val columnName = resultSet.metaData.getColumnName(i)
                         val columnType = resultSet.metaData.getColumnTypeName(i)
-                        if (!Meta.COLUMN_NAMES.contains(columnName)) {
+                        if (!AIRBYTE_META_COLUMNS.contains(columnName.lowercase())) {
                             val value = resultSet.getObject(i)
-                            dataMap[columnName] =
+                            dataMap[columnName.toSnowflakeCompatibleName()] =
                                 value?.let {
                                     AirbyteValue.from(
                                         convertValue(
@@ -89,17 +95,23 @@ class SnowflakeDataDumper(
                     }
                     val outputRecord =
                         OutputRecord(
-                            rawId = resultSet.getString(Meta.COLUMN_NAME_AB_RAW_ID),
+                            rawId =
+                                resultSet.getString(
+                                    Meta.COLUMN_NAME_AB_RAW_ID.toSnowflakeCompatibleName()
+                                ),
                             extractedAt =
                                 resultSet
-                                    .getTimestamp(Meta.COLUMN_NAME_AB_EXTRACTED_AT)
+                                    .getTimestamp(Meta.COLUMN_NAME_AB_EXTRACTED_AT.uppercase())
                                     .toInstant()
                                     .toEpochMilli(),
                             loadedAt = null,
-                            generationId = resultSet.getLong(Meta.COLUMN_NAME_AB_GENERATION_ID),
+                            generationId =
+                                resultSet.getLong(Meta.COLUMN_NAME_AB_GENERATION_ID.uppercase()),
                             data = ObjectValue(dataMap),
                             airbyteMeta =
-                                stringToMeta(resultSet.getString(Meta.COLUMN_NAME_AB_META)),
+                                stringToMeta(
+                                    resultSet.getString(Meta.COLUMN_NAME_AB_META.uppercase())
+                                ),
                         )
                     output.add(outputRecord)
                 }
@@ -117,24 +129,18 @@ class SnowflakeDataDumper(
     }
 
     private fun unformatJsonValue(columnType: String, value: Any): Any {
-        /*
-         * Snowflake automatically pretty-prints JSON results for variant, object and array
-         * when selecting them via a SQL query.  You can get around this by using the `TO_JSON`
-         * function on the column when running the query.  However, we do not have access to the
-         * catalog in the dumper to know which columns need to be un-prettied/modified to match
-         * the toPrettyString() method of the Jackson JsonNode.  To compensate for this, we will
-         * read the JSON string into a JsonNode and then re-pretty-ify it into a string so that
-         * it can match what the expected record mapper is doing.
-         */
         return when (columnType.lowercase()) {
             "variant",
             "array",
-            "object" -> deserializeExact(value.toString()).toPrettyString()
+            "object" ->
+                // blind cast to string is safe - snowflake JDBC driver getObject returns String
+                // for variant/array/object
+                (value as String).deserializeToNode().toAirbyteValue()
             else -> value
         }
     }
 
-    private fun convertValue(value: Any): Any =
+    private fun convertValue(value: Any?): Any? =
         when (value) {
             is BigDecimal -> value.toBigInteger()
             is java.sql.Date -> value.toLocalDate()
