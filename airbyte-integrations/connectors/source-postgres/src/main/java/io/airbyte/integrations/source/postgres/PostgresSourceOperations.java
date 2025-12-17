@@ -152,6 +152,13 @@ public class PostgresSourceOperations extends AbstractJdbcCompatibleSourceOperat
     final PgResultSetMetaData metadata = (PgResultSetMetaData) resultSet.getMetaData();
     final String columnName = metadata.getColumnName(colIndex);
     final ColumnInfo columnInfo = getColumnInfo(colIndex, metadata, columnName);
+
+    // Handle JSON/JSONB early to avoid double-read of ResultSet
+    if ("json".equalsIgnoreCase(columnInfo.columnTypeName) || "jsonb".equalsIgnoreCase(columnInfo.columnTypeName)) {
+      putJsonAsObject(json, columnName, resultSet, colIndex);
+      return;
+    }
+
     final String value = resultSet.getString(colIndex);
     if (value == null) {
       json.putNull(columnName);
@@ -162,7 +169,6 @@ public class PostgresSourceOperations extends AbstractJdbcCompatibleSourceOperat
         case TIMETZ -> putTimeWithTimezone(json, columnName, resultSet, colIndex);
         case TIMESTAMPTZ -> putTimestampWithTimezone(json, columnName, resultSet, colIndex);
         case "hstore" -> putHstoreAsJson(json, columnName, resultSet, colIndex);
-        case "json", "jsonb" -> putJsonAsObject(json, columnName, resultSet, colIndex);
         case "circle" -> putObject(json, columnName, resultSet, colIndex, PGcircle.class);
         case "box" -> putObject(json, columnName, resultSet, colIndex, PGbox.class);
         case "double precision", "float", "float8" -> putDouble(json, columnName, resultSet, colIndex);
@@ -678,14 +684,15 @@ public class PostgresSourceOperations extends AbstractJdbcCompatibleSourceOperat
     final String jsonString = resultSet.getString(index);
     if (jsonString == null) {
       node.putNull(columnName);
-      return;
-    }
-    try {
-      final JsonNode jsonValue = OBJECT_MAPPER.readTree(jsonString);
-      node.set(columnName, jsonValue);
-    } catch (final JsonProcessingException e) {
-      // If parsing fails, fall back to storing as string
-      node.put(columnName, jsonString);
+    } else {
+      try {
+        // Parse into JsonNode so Redshift SUPER type receives proper JSON structure
+        final JsonNode jsonValue = OBJECT_MAPPER.readTree(jsonString);
+        node.set(columnName, jsonValue);
+      } catch (final JsonProcessingException e) {
+        // If parsing fails, store as string (will use VARCHAR instead of SUPER)
+        node.put(columnName, jsonString);
+      }
     }
   }
 

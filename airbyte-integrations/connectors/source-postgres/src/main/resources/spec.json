@@ -4,7 +4,12 @@
     "$schema": "http://json-schema.org/draft-07/schema#",
     "title": "Postgres Source Spec",
     "type": "object",
-    "required": ["host", "port", "database", "username"],
+    "required": [
+      "host",
+      "port",
+      "database",
+      "username"
+    ],
     "properties": {
       "host": {
         "title": "Host",
@@ -20,7 +25,9 @@
         "minimum": 0,
         "maximum": 65536,
         "default": 5432,
-        "examples": ["5432"],
+        "examples": [
+          "5432"
+        ],
         "order": 1,
         "group": "db"
       },
@@ -40,7 +47,9 @@
         },
         "minItems": 0,
         "uniqueItems": true,
-        "default": ["public"],
+        "default": [
+          "public"
+        ],
         "order": 3,
         "group": "db"
       },
@@ -79,7 +88,9 @@
             "title": "disable",
             "additionalProperties": true,
             "description": "Disables encryption of communication between Airbyte and source database.",
-            "required": ["mode"],
+            "required": [
+              "mode"
+            ],
             "properties": {
               "mode": {
                 "type": "string",
@@ -92,7 +103,9 @@
             "title": "allow",
             "additionalProperties": true,
             "description": "Enables encryption only when required by the source database.",
-            "required": ["mode"],
+            "required": [
+              "mode"
+            ],
             "properties": {
               "mode": {
                 "type": "string",
@@ -105,7 +118,9 @@
             "title": "prefer",
             "additionalProperties": true,
             "description": "Allows unencrypted connection only if the source database does not support encryption.",
-            "required": ["mode"],
+            "required": [
+              "mode"
+            ],
             "properties": {
               "mode": {
                 "type": "string",
@@ -118,7 +133,9 @@
             "title": "require",
             "additionalProperties": true,
             "description": "Always require encryption. If the source database server does not support encryption, connection will fail.",
-            "required": ["mode"],
+            "required": [
+              "mode"
+            ],
             "properties": {
               "mode": {
                 "type": "string",
@@ -131,7 +148,10 @@
             "title": "verify-ca",
             "additionalProperties": true,
             "description": "Always require encryption and verifies that the source database server has a valid SSL certificate.",
-            "required": ["mode", "ca_certificate"],
+            "required": [
+              "mode",
+              "ca_certificate"
+            ],
             "properties": {
               "mode": {
                 "type": "string",
@@ -177,7 +197,10 @@
             "title": "verify-full",
             "additionalProperties": true,
             "description": "This is the most secure mode. Always require encryption and verifies the identity of the source database server.",
-            "required": ["mode", "ca_certificate"],
+            "required": [
+              "mode",
+              "ca_certificate"
+            ],
             "properties": {
               "mode": {
                 "type": "string",
@@ -233,7 +256,11 @@
           {
             "title": "Read Changes using Write-Ahead Log (CDC)",
             "description": "<i>Recommended</i> - Incrementally reads new inserts, updates, and deletes using the Postgres <a href=\"https://docs.airbyte.com/integrations/sources/postgres/#cdc\">write-ahead log (WAL)</a>. This needs to be configured on the source database itself. Recommended for tables of any size.",
-            "required": ["method", "replication_slot", "publication"],
+            "required": [
+              "method",
+              "replication_slot",
+              "publication"
+            ],
             "additionalProperties": true,
             "properties": {
               "method": {
@@ -245,7 +272,9 @@
                 "type": "string",
                 "title": "Plugin",
                 "description": "A logical decoding plugin installed on the PostgreSQL server.",
-                "enum": ["pgoutput"],
+                "enum": [
+                  "pgoutput"
+                ],
                 "default": "pgoutput",
                 "order": 2
               },
@@ -301,7 +330,10 @@
                 "type": "string",
                 "title": "Invalid CDC position behavior (Advanced)",
                 "description": "Determines whether Airbyte should fail or re-sync data in case of an stale/invalid cursor value into the WAL. If 'Fail sync' is chosen, a user will have to manually reset the connection before being able to continue syncing data. If 'Re-sync data' is chosen, Airbyte will automatically trigger a refresh but could lead to higher cloud costs and data loss.",
-                "enum": ["Fail sync", "Re-sync data"],
+                "enum": [
+                  "Fail sync",
+                  "Re-sync data"
+                ],
                 "default": "Fail sync",
                 "order": 9
               },
@@ -319,7 +351,9 @@
           {
             "title": "Detect Changes with Xmin System Column",
             "description": "<i>Recommended</i> - Incrementally reads new inserts and updates via Postgres <a href=\"https://docs.airbyte.com/integrations/sources/postgres/#xmin\">Xmin system column</a>. Suitable for databases that have low transaction pressure.",
-            "required": ["method"],
+            "required": [
+              "method"
+            ],
             "properties": {
               "method": {
                 "type": "string",
@@ -331,7 +365,9 @@
           {
             "title": "Scan Changes with User Defined Cursor",
             "description": "Incrementally detects new inserts and updates using the <a href=\"https://docs.airbyte.com/understanding-airbyte/connections/incremental-append/#user-defined-cursor\">cursor column</a> chosen when configuring a connection (e.g. created_at, updated_at).",
-            "required": ["method"],
+            "required": [
+              "method"
+            ],
             "properties": {
               "method": {
                 "type": "string",
@@ -360,6 +396,30 @@
         "description": "If using Entra service principal, the application ID of the service principal",
         "type": "string",
         "group": "auth"
+      },
+      "initial_sync_start_date": {
+        "title": "Initial Sync Start Date (Optional)",
+        "description": "When using incremental sync, only sync records with cursor values on or after this date. Format: YYYY-MM-DD (e.g., 2023-01-01). If not specified, sync all records.",
+        "type": "string",
+        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+        "examples": [
+          "2023-01-01"
+        ],
+        "order": 10,
+        "group": "advanced"
+      },
+      "incremental_batch_size": {
+        "title": "Incremental Sync Batch Size (Optional)",
+        "description": "Maximum number of records to fetch per incremental sync run. Useful for testing with small datasets or managing memory usage. Leave empty for unlimited. Range: 100-1000000.",
+        "type": "integer",
+        "minimum": 100,
+        "maximum": 1000000,
+        "examples": [
+          10000,
+          50000
+        ],
+        "order": 11,
+        "group": "advanced"
       }
     },
     "groups": [

@@ -56,6 +56,7 @@ import com.google.common.collect.ImmutableSet;
 import datadog.trace.api.Trace;
 import io.airbyte.cdk.db.factory.DataSourceFactory;
 import io.airbyte.cdk.db.factory.DatabaseDriver;
+import io.airbyte.cdk.db.jdbc.AirbyteRecordData;
 import io.airbyte.cdk.db.jdbc.JdbcDatabase;
 import io.airbyte.cdk.db.jdbc.JdbcSSLConnectionUtils;
 import io.airbyte.cdk.db.jdbc.JdbcSSLConnectionUtils.SslMode;
@@ -70,7 +71,9 @@ import io.airbyte.cdk.integrations.base.ssh.SshWrappedSource;
 import io.airbyte.cdk.integrations.source.jdbc.AbstractJdbcSource;
 import io.airbyte.cdk.integrations.source.jdbc.JdbcDataSourceUtils;
 import io.airbyte.cdk.integrations.source.jdbc.dto.JdbcPrivilegeDto;
+import io.airbyte.cdk.integrations.source.relationaldb.CursorInfo;
 import io.airbyte.cdk.integrations.source.relationaldb.InitialLoadHandler;
+import io.airbyte.cdk.integrations.source.relationaldb.RelationalDbQueryUtils;
 import io.airbyte.cdk.integrations.source.relationaldb.TableInfo;
 import io.airbyte.cdk.integrations.source.relationaldb.state.NonResumableStateMessageProducer;
 import io.airbyte.cdk.integrations.source.relationaldb.state.SourceStateMessageProducer;
@@ -84,6 +87,7 @@ import io.airbyte.commons.functional.CheckedFunction;
 import io.airbyte.commons.json.Jsons;
 import io.airbyte.commons.map.MoreMaps;
 import io.airbyte.commons.stream.AirbyteStreamStatusHolder;
+import io.airbyte.commons.stream.AirbyteStreamUtils;
 import io.airbyte.commons.util.AutoCloseableIterator;
 import io.airbyte.commons.util.AutoCloseableIterators;
 import io.airbyte.integrations.source.postgres.PostgresQueryUtils.ResultWithFailed;
@@ -1064,6 +1068,86 @@ public class PostgresSource extends AbstractJdbcSource<PostgresType> implements 
 
   private boolean cloudDeploymentMode() {
     return AdaptiveSourceRunner.CLOUD_MODE.equalsIgnoreCase(getFeatureFlags().deploymentMode());
+  }
+
+  @Override
+  public AutoCloseableIterator<AirbyteRecordData> queryTableIncremental(final JdbcDatabase database,
+                                                                          final List<String> columnNames,
+                                                                          final String schemaName,
+                                                                          final String tableName,
+                                                                          final CursorInfo cursorInfo,
+                                                                          final PostgresType cursorFieldType) {
+    LOGGER.info("Queueing incremental query for table: {}", tableName);
+
+    final JsonNode sourceConfig = database.getSourceConfig();
+    final String initialSyncStartDate = sourceConfig.has("initial_sync_start_date") && !sourceConfig.get("initial_sync_start_date").isNull()
+        ? sourceConfig.get("initial_sync_start_date").asText() : null;
+    final Integer batchSize = sourceConfig.has("incremental_batch_size") && !sourceConfig.get("incremental_batch_size").isNull()
+        ? sourceConfig.get("incremental_batch_size").asInt() : null;
+
+    final io.airbyte.protocol.models.AirbyteStreamNameNamespacePair airbyteStream =
+        AirbyteStreamUtils.convertFromNameAndNamespace(tableName, schemaName);
+
+    return AutoCloseableIterators.lazyIterator(() -> {
+      try {
+        final Stream<AirbyteRecordData> stream = database.unsafeQuery(
+          connection -> {
+            LOGGER.info("Preparing incremental query for table: {}", tableName);
+
+            final String fullTableName = RelationalDbQueryUtils.getFullyQualifiedTableNameWithQuoting(schemaName, tableName, getQuoteString());
+            final String quotedCursorField = RelationalDbQueryUtils.enquoteIdentifier(cursorInfo.getCursorField(), getQuoteString());
+
+            // Determine operator based on cursor record count
+            final String operator;
+            if (cursorInfo.getCursorRecordCount() <= 0L) {
+              operator = ">";
+            } else {
+              operator = ">=";
+            }
+
+            final String wrappedColumnNames = RelationalDbQueryUtils.enquoteIdentifierList(columnNames, getQuoteString());
+
+            // Build WHERE clause
+            final StringBuilder whereClause = new StringBuilder();
+            whereClause.append(quotedCursorField).append(" ").append(operator).append(" ?");
+
+            // Add initial_sync_start_date filter if provided and this is first sync (no cursor value yet)
+            if (initialSyncStartDate != null && cursorInfo.getCursor() == null) {
+              LOGGER.info("Applying initial_sync_start_date filter: {} >= '{}'", quotedCursorField, initialSyncStartDate);
+              whereClause.append(" AND ").append(quotedCursorField).append(" >= '").append(initialSyncStartDate).append("'");
+            }
+
+            // Build SQL query
+            final StringBuilder sql = new StringBuilder();
+            sql.append("SELECT ").append(wrappedColumnNames)
+               .append(" FROM ").append(fullTableName)
+               .append(" WHERE ").append(whereClause);
+
+            // Add ORDER BY for cursor field if state emission is enabled
+            if (getStateEmissionFrequency() > 0) {
+              sql.append(" ORDER BY ").append(quotedCursorField).append(" ASC");
+            }
+
+            // Add LIMIT if batch size is specified
+            if (batchSize != null && batchSize > 0) {
+              sql.append(" LIMIT ").append(batchSize);
+              LOGGER.info("Applying incremental_batch_size limit: {} records", batchSize);
+            }
+
+            LOGGER.info("Executing incremental query for table {}: {}", tableName, sql.toString());
+
+            final PreparedStatement preparedStatement = connection.prepareStatement(sql.toString());
+            sourceOperations.setCursorField(preparedStatement, 1, cursorFieldType, cursorInfo.getCursor());
+
+            return preparedStatement;
+          },
+          sourceOperations::convertDatabaseRowToAirbyteRecordData
+        );
+        return AutoCloseableIterators.fromStream(stream, airbyteStream);
+      } catch (final SQLException e) {
+        throw new RuntimeException(e);
+      }
+    }, airbyteStream);
   }
 
 }

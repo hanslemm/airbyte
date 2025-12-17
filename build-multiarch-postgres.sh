@@ -37,6 +37,13 @@ cp "/Users/hanslemm/GitHub/airbyte-source/airbyte-integrations/connectors/source
 cp "/Users/hanslemm/GitHub/airbyte-source/airbyte-integrations/connectors/source-postgres/src/main/java/io/airbyte/integrations/source/postgres/PostgresType.java" \
    ../PostgresType.java
 
+cp "/Users/hanslemm/GitHub/airbyte-source/airbyte-integrations/connectors/source-postgres/src/main/java/io/airbyte/integrations/source/postgres/PostgresSource.java" \
+   ../PostgresSource.java
+
+# Replace spec.json in the JAR
+cp "/Users/hanslemm/GitHub/airbyte-source/airbyte-integrations/connectors/source-postgres/src/main/resources/spec.json" \
+   ./spec.json
+
 # Use Docker to compile with the exact same environment
 docker run --rm \
     --platform linux/amd64 \
@@ -53,7 +60,8 @@ docker run --rm \
         javac -cp "$CLASSPATH" \
             -d /workspace/jar-contents \
             /workspace/PostgresType.java \
-            /workspace/PostgresSourceOperations.java
+            /workspace/PostgresSourceOperations.java \
+            /workspace/PostgresSource.java
 
         echo "✅ Compilation successful"
     '
